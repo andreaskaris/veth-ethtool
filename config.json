@@ -1,0 +1,6 @@
+{                                                                                                  
+    "ethernet-configs": [                                                                                           
+         {"namespace": "default", "name": "red|blue",     "ethtool-settings": {"tx-checksumming": false, "rx-checksumming": false}},
+         {"namespace": "test",    "name": "green|yellow", "ethtool-settings": {"tx-checksumming": false, "rx": false}}   
+    ]                                                                                                               
+}                
