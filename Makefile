@@ -4,6 +4,8 @@ OUTPUT_DIR = $(MAKEFILE_DIR)/_output
 KIND_CLUSTER_CONFIG ?= $(OUTPUT_DIR)/kubeconfig
 CONTAINER_IMAGE ?= quay.io/akaris/veth-ethtool:latest
 SAVED_IMAGE ?= $(OUTPUT_DIR)/image.tar
+#CONTAINER_ENGINE ?= KIND_EXPERIMENTAL_PROVIDER=podman
+CONTAINER_ENGINE = 
 
 .PHONY: build
 build:
@@ -25,7 +27,7 @@ build-container:
 .PHONY: load-container-image-kind
 load-container-image-kind:
 	podman save $(CONTAINER_IMAGE) > $(SAVED_IMAGE)
-	KIND_EXPERIMENTAL_PROVIDER=podman kind load image-archive $(SAVED_IMAGE) --name $(KIND_CLUSTER_NAME)
+	$(CONTAINER_ENGINE) kind load image-archive $(SAVED_IMAGE) --name $(KIND_CLUSTER_NAME)
 	rm -f $(SAVED_IMAGE)
 
 .PHONY: deploy-kubernetes
@@ -38,14 +40,17 @@ undeploy-kubernetes:
 
 .PHONY: create-kind
 create-kind:
-	KIND_EXPERIMENTAL_PROVIDER=podman kind create cluster --name $(KIND_CLUSTER_NAME) --kubeconfig $(KIND_CLUSTER_CONFIG)
+	$(CONTAINER_ENGINE) kind create cluster --name $(KIND_CLUSTER_NAME) --kubeconfig $(KIND_CLUSTER_CONFIG)
 
 .PHONY: destroy-kind
 destroy-kind:
-	KIND_EXPERIMENTAL_PROVIDER=podman kind delete cluster --name $(KIND_CLUSTER_NAME)
+	$(CONTAINER_ENGINE) kind delete cluster --name $(KIND_CLUSTER_NAME)
 
 .PHONY: e2e-test
-e2e-test: build-container load-container-image-kind
+e2e-test:
 	export KUBECONFIG=$(KIND_CLUSTER_CONFIG) && \
 	cd $(MAKEFILE_DIR)/e2e && \
 	go test -v -count 1 ./...
+
+.PHONY: build-and-e2e-test
+build-and-e2e-test: build-container load-container-image-kind e2e-test

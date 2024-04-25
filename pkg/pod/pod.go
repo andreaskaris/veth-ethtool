@@ -9,6 +9,8 @@ import (
 
 	"github.com/andreaskaris/veth-ethtool/pkg/helpers"
 	"github.com/vishvananda/netlink"
+	"k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/klog"
 )
 
 // Metadata holds a pod's metadata.
@@ -69,7 +71,7 @@ func GetOwnerOfLink(link netlink.Link) (*Pod, error) {
 	// List all namespaces with their IDs.
 	netnsIDs, err := ListNetnsIDs(helpers.GetNetNSLocation())
 	if err != nil {
-		return nil, fmt.Errorf("failed to list netns IDs, err: %q", err)
+		return nil, fmt.Errorf("failed to list all netns IDs, netnsIds: %+v, err: %q", netnsIDs, err)
 	}
 
 	// Then, find the name of the namespace with the ID that's shown in
@@ -80,12 +82,14 @@ func GetOwnerOfLink(link netlink.Link) (*Pod, error) {
 	for name, id := range netnsIDs {
 		if id == linkNetnsID {
 			linkNetnsName = name
+			break
 		}
 	}
 	if linkNetnsName == "" {
 		return nil, fmt.Errorf("could not find namespace name for link; link name: %s, link NetnsID: %d, netnsIDs: %+v",
 			linkName, linkNetnsID, netnsIDs)
 	}
+	klog.V(2).Infof("Found netns %q for link %q", linkNetnsName, linkName)
 
 	pod, err := findPodForNetns(linkNetnsName)
 	if err != nil {
@@ -106,6 +110,7 @@ func findPodForNetns(netns string) (*Pod, error) {
 	if err := json.Unmarshal(out, &podList); err != nil {
 		return nil, err
 	}
+	klog.V(2).Infof("akaris 1, out: %s, podList: %+v", out, podList)
 	for _, pod := range podList.Items {
 		pod := pod
 		out, err := crictl("inspectp", "-o", "json", pod.ID)
@@ -116,6 +121,7 @@ func findPodForNetns(netns string) (*Pod, error) {
 		if err := json.Unmarshal(out, &podInspect); err != nil {
 			return nil, err
 		}
+		klog.V(2).Infof("akaris 2, out: %s, podInspect: %+v", out, podList)
 		if podInspect.GetNetns() == netns {
 			return &pod, nil
 		}
@@ -134,18 +140,21 @@ var listNetnsIDs = func(dir string) (map[string]int, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not open directory %q err: %q", dir, err)
 	}
+	var errs []error
 	for _, e := range entries {
 		p := path.Join(dir, e.Name())
 		f, err := os.Open(p)
 		if err != nil {
-			return nil, fmt.Errorf("could not open file %q for reading, err: %q", p, err)
+			errs = append(errs, fmt.Errorf("could not open file %q for reading, err: %q", p, err))
+			continue
 		}
 		id, err := netlink.GetNetNsIdByFd(int(f.Fd()))
 		if err != nil {
-			return nil, fmt.Errorf("issue running netlink.GetNetNsIdByFd, file: %q, err: %q", p, err)
+			errs = append(errs, fmt.Errorf("issue running netlink.GetNetNsIdByFd, file: %q, err: %q", p, err))
+			continue
 		}
 		nsIDMap[f.Name()] = id
 	}
 
-	return nsIDMap, nil
+	return nsIDMap, errors.NewAggregate(errs)
 }

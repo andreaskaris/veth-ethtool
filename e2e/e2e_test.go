@@ -177,6 +177,7 @@ func newDeployment(namespace string, name string, replicaCount int32) *appsv1.De
 
 func newDaemonset(namespace, name, image, configMapName string) *appsv1.DaemonSet {
 	labels := map[string]string{"app": name}
+	mountPropagation := corev1.MountPropagationHostToContainer
 	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels},
 		Spec: appsv1.DaemonSetSpec{
@@ -192,13 +193,13 @@ func newDaemonset(namespace, name, image, configMapName string) *appsv1.DaemonSe
 							Name:            name,
 							Image:           image,
 							ImagePullPolicy: corev1.PullNever,
-							Command:         []string{
-                                "/usr/local/bin/veth-ethtool",
-                                "-v=2",
-                            },
+							Command: []string{
+								"/usr/local/bin/veth-ethtool",
+								"-v=2",
+							},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "host", MountPath: "/host"},
-								{Name: "netns", MountPath: "/run/netns"},
+								{Name: "netns", MountPath: "/run/netns", MountPropagation: &mountPropagation},
 								{Name: "config", MountPath: "/etc/veth-ethtool"},
 							},
 						},

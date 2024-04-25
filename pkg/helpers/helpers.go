@@ -10,7 +10,7 @@ import (
 const (
 	TypeVeth      = "veth"
 	TypeNetwork   = "network"
-	NetNSLocation = "/host/run/netns"
+	NetNSLocation = "/run/netns"
 )
 
 // FindExecutable checks if an executable exists inside the container. If so, it returns that path.
