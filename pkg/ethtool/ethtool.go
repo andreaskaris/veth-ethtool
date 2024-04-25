@@ -3,7 +3,8 @@ package ethtool
 import (
 	"encoding/json"
 	"fmt"
-	"os/exec"
+
+	"github.com/andreaskaris/veth-ethtool/pkg/helpers"
 )
 
 type OffloadList map[string]OffloadAttributes
@@ -62,7 +63,7 @@ func List(iface string) (OffloadList, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = json.Unmarshal([]byte(out), &ol)
+	err = json.Unmarshal(out, &ol)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +89,7 @@ func List(iface string) (OffloadList, error) {
 }
 
 // Set sets the offloading attribute of an interface.
-func Set(iface string, field string, enable bool) (string, error) {
+func Set(iface string, field string, enable bool) ([]byte, error) {
 	set := "off"
 	if enable {
 		set = "on"
@@ -96,8 +97,6 @@ func Set(iface string, field string, enable bool) (string, error) {
 	return ethtool("-K", iface, field, set)
 }
 
-var ethtool = func(parameters ...string) (string, error) {
-	cmd := exec.Command("ethtool", parameters...)
-	out, err := cmd.Output()
-	return string(out), err
+var ethtool = func(parameters ...string) ([]byte, error) {
+	return helpers.RunCommand("ethtool", parameters...)
 }

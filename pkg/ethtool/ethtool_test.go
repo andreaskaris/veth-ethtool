@@ -413,24 +413,24 @@ var (
 		"generic-receive-offload":        {pointer.Bool(true), pointer.Bool(false), pointer.Bool(true)},
 	}
 
-	fakeEthtool = func(parameters ...string) (string, error) {
+	fakeEthtool = func(parameters ...string) ([]byte, error) {
 		if len(parameters) == 3 && parameters[0] == "--json" && parameters[1] == "-k" {
 			iface := parameters[2]
 			if iface == "dummy0" {
-				return dummy0Output, nil
+				return []byte(dummy0Output), nil
 			}
-			return notFoundOutput, fmt.Errorf(notFoundError)
+			return []byte(notFoundOutput), fmt.Errorf(notFoundError)
 		}
 		if len(parameters) == 4 && parameters[0] == "-K" {
 			iface := parameters[1]
 			field := parameters[2]
 			set := parameters[3]
 			if iface == "dummy0" && field == "tx-checksumming" && (set == "on" || set == "off") {
-				return "Actual changes: <etc>", nil
+				return []byte("Actual changes: <etc>"), nil
 			}
-			return notFoundOutput, fmt.Errorf(notFoundError)
+			return []byte(notFoundOutput), fmt.Errorf(notFoundError)
 		}
-		return "", fmt.Errorf("unsupported input for fakeEthtool")
+		return []byte{}, fmt.Errorf("unsupported input for fakeEthtool")
 	}
 )
 

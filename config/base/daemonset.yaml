@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: veth-ethtool
+  labels:
+    k8s-app: veth-ethtool-logging
+spec:
+  selector:
+    matchLabels:
+      name: veth-ethtool
+  template:
+    metadata:
+      labels:
+        name: veth-ethtool
+    spec:
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: veth-ethtool
+        image: quay.io/akaris/veth-ethtool:latest
+        imagePullPolicy: Never
+        command:
+        - /usr/local/bin/veth-ethtool
+        volumeMounts:
+        - name: host
+          mountPath: /host
+        - name: config
+          mountPath: /etc/veth-ethtool
+      volumes:
+      - name: host
+        hostPath:
+          path: /
+      - name: config
+        configMap:
+          name: veth-ethtool

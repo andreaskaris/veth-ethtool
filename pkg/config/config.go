@@ -28,6 +28,11 @@ type Config struct {
 	EthernetConfigs []EthernetConfig `json:"ethernet-configs"`
 }
 
+func (c Config) String() string {
+	b, _ := json.Marshal(c)
+	return string(b)
+}
+
 func New(location string) (*Config, error) {
 	content, err := readFile(location)
 	if err != nil {

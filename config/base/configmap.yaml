@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: veth-ethtool
+data:
+  config.json: | 
+    {
+    "ethernet-configs": [
+        {"namespace": "default", "name": "red|blue",     "ethtool-settings": {"tx-checksumming": false, "rx-checksumming": false}},
+        {"namespace": "test",    "name": "green|yellow", "ethtool-settings": {"tx-checksumming": false, "rx": false}}
+        ]
+    }
