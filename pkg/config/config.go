@@ -18,7 +18,7 @@ func (e EthernetConfig) Match(namespace, name string) bool {
 		return false
 	}
 	nameRegex := regexp.MustCompile(e.Name)
-	if !nameRegex.Match([]byte(namespace)) {
+	if !nameRegex.Match([]byte(name)) {
 		return false
 	}
 	return true

@@ -17,6 +17,7 @@ limitations under the License.
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -38,14 +39,32 @@ import (
 )
 
 const (
-	operatorName       = "veth-ethtool"
-	operatorImage      = "quay.io/akaris/veth-ethtool:latest"
-	podRegex           = "red-|blue-"
-	testDeploymentName = "red-deployment"
+	operatorName        = "veth-ethtool"
+	operatorImage       = "quay.io/akaris/veth-ethtool:latest"
+	podRegex            = "red-|blue-"
+	testDeployment0Name = "red-deployment"
+	testDeployment1Name = "blue-deployment"
 )
 
 func TestRun(t *testing.T) {
 	deploymentFeature := features.New("veth-ethtool").
+		// Setup a deployment before the operator is deployed.
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			testDeploymentName := testDeployment0Name
+			deployment := newDeployment(cfg.Namespace(), testDeploymentName, 1)
+			if err := cfg.Client().Resources().Create(ctx, deployment); err != nil {
+				t.Fatal(err)
+			}
+			dep, err := waitForDeployment(ctx, cfg, cfg.Namespace(), testDeploymentName)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("deployment found: %s/%s", dep.Namespace, dep.Name)
+
+			// Give things 5 seconds to settle.
+			time.Sleep(time.Second * 5)
+			return context.WithValue(ctx, testDeploymentName, dep)
+		}).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			// Deploy operator.
 			ethCfg := config.Config{
@@ -55,7 +74,7 @@ func TestRun(t *testing.T) {
 						Name:      podRegex,
 						EthtoolSettings: map[string]bool{
 							"tx-checksumming": false,
-							"rx":              false,
+							"rx-checksumming": false,
 						},
 					},
 				},
@@ -64,88 +83,64 @@ func TestRun(t *testing.T) {
 			if err := cfg.Client().Resources().Create(ctx, configMap); err != nil {
 				t.Fatal(err)
 			}
-			daemonSet := newDaemonset(cfg.Namespace(), operatorName, operatorImage, configMap.Name)
+			daemonSet := newOperatorDaemonset(cfg.Namespace(), operatorName, operatorImage, configMap.Name)
 			if err := cfg.Client().Resources().Create(ctx, daemonSet); err != nil {
 				t.Fatal(err)
 			}
-
-			var ds appsv1.DaemonSet
-			err := retry.OnError(
-				wait.Backoff{Duration: 5 * time.Second, Factor: 1, Steps: 12, Cap: 120 * time.Second},
-				func(err error) bool {
-					if errors.IsNotFound(err) {
-						klog.Infof("Could not find DaemonSet")
-						return true
-					}
-					if strings.Contains(err.Error(), "DaemonSet not ready yet") {
-						klog.Infof("DaemonSet is not ready, yet")
-						return true
-					}
-					return false
-				},
-				func() error {
-					if err := cfg.Client().Resources().Get(ctx, operatorName, cfg.Namespace(), &ds); err != nil {
-						return err
-					}
-					if !isDaemonSetReady(&ds) {
-						return fmt.Errorf("DaemonSet not ready yet")
-					}
-					return nil
-				},
-			)
+			ds, err := waitForDaemonSet(ctx, cfg, cfg.Namespace(), operatorName)
 			if err != nil {
 				t.Fatal(err)
 			}
 
 			// Give things 5 seconds to settle.
 			time.Sleep(time.Second * 5)
-			return context.WithValue(ctx, fmt.Sprintf("daemonset/%s", operatorName), &ds)
+			return context.WithValue(ctx, fmt.Sprintf("daemonset/%s", operatorName), ds)
 		}).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			testDeploymentName := testDeployment1Name
 			deployment := newDeployment(cfg.Namespace(), testDeploymentName, 1)
 			if err := cfg.Client().Resources().Create(ctx, deployment); err != nil {
 				t.Fatal(err)
 			}
-
-			var dep appsv1.Deployment
-			err := retry.OnError(
-				wait.Backoff{Duration: 5 * time.Second, Factor: 1, Steps: 12, Cap: 120 * time.Second},
-				func(err error) bool {
-					if errors.IsNotFound(err) {
-						klog.Infof("Could not find Deployment")
-						return true
-					}
-					if strings.Contains(err.Error(), "Deployment not ready yet") {
-						klog.Infof("Deployment is not ready, yet")
-						return true
-					}
-					return false
-				},
-				func() error {
-					if err := cfg.Client().Resources().Get(ctx, testDeploymentName, cfg.Namespace(), &dep); err != nil {
-						return err
-					}
-					if !isDeploymentReady(&dep) {
-						return fmt.Errorf("Deployment not ready yet")
-					}
-					return nil
-				},
-			)
+			dep, err := waitForDeployment(ctx, cfg, cfg.Namespace(), testDeploymentName)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if &dep != nil {
-				t.Logf("deployment found: %s", dep.Name)
-			}
+			t.Logf("deployment found: %s/%s", dep.Namespace, dep.Name)
+
 			// Give things 5 seconds to settle.
-			time.Sleep(time.Second * 60)
-			return context.WithValue(ctx, testDeploymentName, &dep)
+			time.Sleep(time.Second * 5)
+			return context.WithValue(ctx, testDeploymentName, dep)
 		}).
-		Assess("test deployment creation", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		Assess("test ethernet status creation", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			listOption := func(lo *metav1.ListOptions) {
+				lo.LabelSelector = fmt.Sprintf("app=%s", operatorName)
+			}
+			pods := &corev1.PodList{}
+			err := cfg.Client().Resources(cfg.Namespace()).List(context.TODO(), pods, listOption)
+			if err != nil || pods.Items == nil {
+				t.Error("error while getting pods", err)
+			}
+			script := `for intf in $(ip a | awk -F '@| ' '/veth/ {print $2}'); do echo -n "$intf "; ethtool -k $intf | grep -E 'tx-checksumming'; echo -n "$intf "; ethtool -k $intf | grep -E 'rx-checksumming'; done`
+			for _, p := range pods.Items {
+				var stdout, stderr bytes.Buffer
+				command := []string{"/bin/bash", "-c", script}
+				if err := cfg.Client().Resources().ExecInPod(ctx, p.Namespace, p.Name, operatorName, command, &stdout, &stderr); err != nil {
+					t.Log(stderr.String())
+					t.Fatal(err)
+				}
+				t.Logf("pod %q, stdout: '%s', stderr: '%s'", p.Name, stdout.String(), stderr.String())
+			}
+			time.Sleep(60 * time.Second)
+			// TODO: automate this.
 			return ctx
 		}).
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			dep := ctx.Value(testDeploymentName).(*appsv1.Deployment)
+			dep := ctx.Value(testDeployment0Name).(*appsv1.Deployment)
+			if err := cfg.Client().Resources().Delete(ctx, dep); err != nil {
+				t.Fatal(err)
+			}
+			dep = ctx.Value(testDeployment1Name).(*appsv1.Deployment)
 			if err := cfg.Client().Resources().Delete(ctx, dep); err != nil {
 				t.Fatal(err)
 			}
@@ -175,7 +170,39 @@ func newDeployment(namespace string, name string, replicaCount int32) *appsv1.De
 	}
 }
 
-func newDaemonset(namespace, name, image, configMapName string) *appsv1.DaemonSet {
+// TODO: replace with https://github.com/kubernetes-sigs/e2e-framework/tree/main/examples/wait_for_resources.
+func waitForDeployment(ctx context.Context, cfg *envconf.Config, namespace, name string) (*appsv1.Deployment, error) {
+	var dep appsv1.Deployment
+	err := retry.OnError(
+		wait.Backoff{Duration: 5 * time.Second, Factor: 1, Steps: 12, Cap: 120 * time.Second},
+		func(err error) bool {
+			if errors.IsNotFound(err) {
+				klog.Infof("Could not find Deployment")
+				return true
+			}
+			if strings.Contains(err.Error(), "Deployment not ready yet") {
+				klog.Infof("Deployment is not ready, yet")
+				return true
+			}
+			return false
+		},
+		func() error {
+			if err := cfg.Client().Resources().Get(ctx, name, namespace, &dep); err != nil {
+				return err
+			}
+			if !isDeploymentReady(&dep) {
+				return fmt.Errorf("Deployment not ready yet")
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &dep, nil
+}
+
+func newOperatorDaemonset(namespace, name, image, configMapName string) *appsv1.DaemonSet {
 	labels := map[string]string{"app": name}
 	mountPropagation := corev1.MountPropagationHostToContainer
 	return &appsv1.DaemonSet{
@@ -201,6 +228,13 @@ func newDaemonset(namespace, name, image, configMapName string) *appsv1.DaemonSe
 								{Name: "host", MountPath: "/host"},
 								{Name: "netns", MountPath: "/run/netns", MountPropagation: &mountPropagation},
 								{Name: "config", MountPath: "/etc/veth-ethtool"},
+							},
+							SecurityContext: &corev1.SecurityContext{
+								Capabilities: &corev1.Capabilities{
+									Add: []corev1.Capability{
+										"NET_ADMIN",
+									},
+								},
 							},
 						},
 					},
@@ -231,6 +265,38 @@ func newDaemonset(namespace, name, image, configMapName string) *appsv1.DaemonSe
 			},
 		},
 	}
+}
+
+// TODO: replace with https://github.com/kubernetes-sigs/e2e-framework/tree/main/examples/wait_for_resources.
+func waitForDaemonSet(ctx context.Context, cfg *envconf.Config, namespace, name string) (*appsv1.DaemonSet, error) {
+	var ds appsv1.DaemonSet
+	err := retry.OnError(
+		wait.Backoff{Duration: 5 * time.Second, Factor: 1, Steps: 12, Cap: 120 * time.Second},
+		func(err error) bool {
+			if errors.IsNotFound(err) {
+				klog.Infof("Could not find DaemonSet")
+				return true
+			}
+			if strings.Contains(err.Error(), "DaemonSet not ready yet") {
+				klog.Infof("DaemonSet is not ready, yet")
+				return true
+			}
+			return false
+		},
+		func() error {
+			if err := cfg.Client().Resources().Get(ctx, name, namespace, &ds); err != nil {
+				return err
+			}
+			if !isDaemonSetReady(&ds) {
+				return fmt.Errorf("DaemonSet not ready yet")
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &ds, nil
 }
 
 func newConfigMap(namespace, name string, cfg config.Config) *corev1.ConfigMap {

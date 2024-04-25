@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"strings"
+	"time"
 
 	"github.com/andreaskaris/veth-ethtool/pkg/helpers"
 	"github.com/vishvananda/netlink"
@@ -49,8 +49,7 @@ type PodInspect struct {
 func (p PodInspect) GetNetns() string {
 	for _, ns := range p.Info.RuntimeSpec.Linux.Namespaces {
 		if ns.Type == helpers.TypeNetwork {
-			splitPath := strings.Split(ns.Path, "/")
-			return splitPath[len(splitPath)-1]
+			return path.Base(ns.Path)
 		}
 	}
 	return ""
@@ -91,6 +90,8 @@ func GetOwnerOfLink(link netlink.Link) (*Pod, error) {
 	}
 	klog.V(2).Infof("Found netns %q for link %q", linkNetnsName, linkName)
 
+	// TODO: race condition, link is there before pod is listed -_-
+	time.Sleep(2 * time.Second)
 	pod, err := findPodForNetns(linkNetnsName)
 	if err != nil {
 		return nil, err
@@ -102,15 +103,13 @@ func GetOwnerOfLink(link netlink.Link) (*Pod, error) {
 // pod with netns within the list of .info.runtimeSpec.linux.namespaces.
 func findPodForNetns(netns string) (*Pod, error) {
 	var podList PodList
-
 	out, err := crictl("pods", "-o", "json")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("listing pods failed, out: %q, err: %q", out, err)
 	}
 	if err := json.Unmarshal(out, &podList); err != nil {
 		return nil, err
 	}
-	klog.V(2).Infof("akaris 1, out: %s, podList: %+v", out, podList)
 	for _, pod := range podList.Items {
 		pod := pod
 		out, err := crictl("inspectp", "-o", "json", pod.ID)
@@ -121,7 +120,6 @@ func findPodForNetns(netns string) (*Pod, error) {
 		if err := json.Unmarshal(out, &podInspect); err != nil {
 			return nil, err
 		}
-		klog.V(2).Infof("akaris 2, out: %s, podInspect: %+v", out, podList)
 		if podInspect.GetNetns() == netns {
 			return &pod, nil
 		}
@@ -153,7 +151,8 @@ var listNetnsIDs = func(dir string) (map[string]int, error) {
 			errs = append(errs, fmt.Errorf("issue running netlink.GetNetNsIdByFd, file: %q, err: %q", p, err))
 			continue
 		}
-		nsIDMap[f.Name()] = id
+		baseName := path.Base(f.Name())
+		nsIDMap[baseName] = id
 	}
 
 	return nsIDMap, errors.NewAggregate(errs)

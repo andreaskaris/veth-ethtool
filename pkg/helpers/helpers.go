@@ -3,6 +3,7 @@ package helpers
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"k8s.io/klog"
 )
@@ -18,12 +19,14 @@ const (
 func FindExecutable(name string) ([]string, error) {
 	cmd := exec.Command("which", name)
 	if out, err := cmd.Output(); err == nil {
-		return []string{string(out)}, nil
+		outStr := strings.TrimSuffix(string(out), "\n")
+		return []string{outStr}, nil
 	}
 
 	cmd = exec.Command("chroot", "/host", "which", name)
 	if out, err := cmd.Output(); err == nil {
-		return []string{"chroot", "/host", string(out)}, nil
+		outStr := strings.TrimSuffix(string(out), "\n")
+		return []string{"chroot", "/host", outStr}, nil
 	}
 	return nil, fmt.Errorf("could not find executable %q", name)
 }
